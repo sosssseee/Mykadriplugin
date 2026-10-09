@@ -62,6 +62,34 @@
     }, fail);
   }
 
+  // try several spellings of the title and merge the results
+  function searchMulti(card, ok, fail) {
+    var raw = [
+      card.original_title, card.original_name, card.title, card.name
+    ];
+    var queries = [];
+    function add(q) {
+      q = (q || '').replace(/\s+/g, ' ').trim();
+      if (q.length >= 3 && queries.indexOf(q) < 0) queries.push(q);
+    }
+    raw.forEach(function (t) {
+      add(t);
+      add((t || '').replace(/[:\-–—].*$/, ''));        // drop subtitle
+      add((t || '').replace(/[^\w\s\u00C0-\u024F\u0400-\u04FF]/g, ' ')); // drop punctuation
+    });
+    queries = queries.slice(0, 5);
+
+    var all = [], seen = {}, i = 0, lastErr = '';
+    (function next() {
+      if (i >= queries.length) return all.length ? ok(all) : (lastErr ? fail(lastErr) : ok([]));
+      search(queries[i++], function (list) {
+        list.forEach(function (it) { if (!seen[it.url]) { seen[it.url] = 1; all.push(it); } });
+        if (all.length >= 8) return ok(all);
+        next();
+      }, function (e) { lastErr = e; next(); });
+    })();
+  }
+
   // ---------- stream extraction ----------
   // The movie page contains: movie: [{"label":"...","sources":[{"label":"720p","type":"hls","file":"https://cdn2.mykadri.net/.../playlist.m3u8"}]}]
   function getStream(url, ok, fail) {
@@ -77,11 +105,24 @@
       var seasons = parsePlaylist(html);
       if (seasons) return ok(null, null, seasons);
 
-      // movie
-      while ((m = re.exec(html))) {
+      // movie: take only the Georgian panel / movie: [...] block when present
+      var mi = html.indexOf('movie:');
+      var block = mi >= 0 ? html.slice(mi, mi + 4000) : html;
+
+      while ((m = re.exec(block))) {
         var link = m[2].replace(/\\\//g, '/');
         quality[m[1]] = link;
         if (!first) first = link;
+      }
+
+      // fallback: any m3u8/mp4 file url inside the movie block, any key order
+      if (!first) {
+        var re2 = /"file"\s*:\s*"(https?:[^"]+?\.(?:m3u8|mp4)[^"]*)"/g;
+        while ((m = re2.exec(block))) {
+          var l2 = m[1].replace(/\\\//g, '/');
+          quality['auto'] = l2;
+          if (!first) first = l2;
+        }
       }
 
       if (!first) return fail('no stream');
@@ -166,16 +207,15 @@
         title: card.title || card.name || item.title
       });
     }, function () {
-      Lampa.Noty.show('mykadri: stream not found');
+      Lampa.Noty.show('mykadri: no Georgian stream on this page');
     });
   }
 
   function start(card) {
-    var q = card.original_title || card.original_name || card.title || card.name;
     Lampa.Noty.show('mykadri: searching...');
 
-    search(q, function (list) {
-      if (!list.length) return Lampa.Noty.show('mykadri: nothing found');
+    searchMulti(card, function (list) {
+      if (!list.length) return Lampa.Noty.show('mykadri: not on the site');
       if (list.length === 1) return play(list[0], card);
 
       Lampa.Select.show({
