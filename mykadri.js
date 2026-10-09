@@ -125,8 +125,12 @@
         }
       }
 
-      if (!first) return fail('no stream');
-      ok(first, quality);
+      // Russian dub lives in a third-party iframe panel (movie-rus)
+      var rm = html.match(/data-player-id="movie-rus"[\s\S]{0,800}?data-src="([^"]+)"/);
+      var rus = rm ? rm[1].replace(/&amp;/g, '&') : '';
+
+      if (!first && !rus) return fail('no stream');
+      ok(first, quality, null, rus);
     }, fail);
   }
 
@@ -166,6 +170,26 @@
     return out.length ? out : null;
   }
 
+  // Russian: open the iframe page and look for a direct m3u8/mp4 inside it
+  function playRussian(iframeUrl, card) {
+    Lampa.Noty.show('mykadri: loading Russian...');
+
+    get(iframeUrl, function (html) {
+      html = String(html).replace(/\\\//g, '/');
+      var m = html.match(/https?:\/\/[^"'\s\\<>]+?\.m3u8[^"'\s\\<>]*/i) ||
+              html.match(/https?:\/\/[^"'\s\\<>]+?\.mp4[^"'\s\\<>]*/i);
+
+      if (!m) return Lampa.Noty.show('mykadri: Russian player hides the link');
+
+      Lampa.Player.play({
+        url: m[0],
+        title: (card.title || card.name || '') + ' (RU)'
+      });
+    }, function () {
+      Lampa.Noty.show('mykadri: Russian player failed');
+    });
+  }
+
   function playEpisodes(eps, index, card) {
     var pl = eps.map(function (ep) {
       return { title: (card.name || card.title || '') + ' - ' + ep.title, url: ep.url };
@@ -198,8 +222,25 @@
   function play(item, card) {
     Lampa.Noty.show('mykadri: loading...');
 
-    getStream(item.url, function (url, quality, seasons) {
+    getStream(item.url, function (url, quality, seasons, rus) {
       if (seasons) return pickSeason(seasons, card);
+
+      if (!url && rus) return playRussian(rus, card);
+
+      if (url && rus) {
+        return Lampa.Select.show({
+          title: 'mykadri.tv',
+          items: [
+            { title: 'ქართულად (Georgian)', ka: true },
+            { title: 'Русская озвучка', ru: true }
+          ],
+          onSelect: function (a) {
+            if (a.ru) return playRussian(rus, card);
+            Lampa.Player.play({ url: url, quality: quality, title: card.title || card.name || item.title });
+          },
+          onBack: function () { Lampa.Controller.toggle('content'); }
+        });
+      }
 
       Lampa.Player.play({
         url: url,
